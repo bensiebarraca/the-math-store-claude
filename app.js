@@ -26,7 +26,8 @@ function stockLabel(v) { if (v.stock == null) return { t: 'In stock', c: '' }; c
 function fromPrice(p) { const ps = p.variants.filter(priced).map(v => Number(v.price)); return ps.length ? Math.min(...ps) : null; }
 function allSold(p) { return p.variants.length > 0 && p.variants.every(v => !avail(v)); }
 function findBook(id) { return S.books.find(p => p.id === id); }
-function imgUrl(path) { return sb.storage.from('book-images').getPublicUrl(path).data.publicUrl; }
+const isLocal = p => !/^https?:/.test(p);
+function imgUrl(path) { if (!isLocal(path)) return path; return sb.storage.from('book-images').getPublicUrl(path).data.publicUrl; }
 function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3400); }
 function toneFor(p) { const i = Math.max(0, Math.round((p.sort || 0) / 10) - 1); return TONES[i % TONES.length]; }
 
@@ -234,7 +235,7 @@ function productView() {
   const thumbs = imgs.length > 1 ? '<div class="thumbs">' + imgs.map((im, i) => '<button type="button" class="' + (i === gi ? 'on' : '') + '" aria-label="Photo ' + (i + 1) + '" data-act="gal" data-i="' + i + '"><img src="' + esc(imgUrl(im.path)) + '" alt=""></button>').join('') + '</div>' : '';
   let q = S.qty[p.id] || 1; if (v && v.stock != null) q = Math.min(q, Math.max(1, v.stock));
   const can = v && priced(v) && avail(v), sl = v ? stockLabel(v) : null;
-  const desc = (p.description || '').split(/\n\s*\n/).filter(Boolean).map(t => '<p style="font-size:18px;line-height:1.65;color:var(--muted)">' + esc(t) + '</p>').join('');
+  const desc = (p.description || '').split(/\n\s*\n/).filter(Boolean).map(t => '<p style="font-size:18px;line-height:1.65;color:var(--muted);white-space:pre-line">' + esc(t) + '</p>').join('');
   const inc = p.includes.length ? '<div class="col" style="gap:8px"><h3 style="font-size:20px">What is in the set</h3><ul style="margin:0;padding-left:22px;color:var(--muted);line-height:1.8">' + p.includes.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul></div>' : '';
   return '<div class="in" style="padding-block:32px 96px"><div class="col" style="gap:24px">' + back
     + (p.published === false ? '<div class="note warn">This book is hidden from customers. Only you can see this page.</div>' : '')
@@ -242,7 +243,7 @@ function productView() {
     + '<div class="col" style="flex:1 1 420px;gap:22px"><div class="tag">' + esc(LEVELS[p.level] || '') + (p.gradeLabel ? ' · ' + esc(p.gradeLabel) : '') + '</div><h1 style="font-size:clamp(32px,4.5vw,48px)">' + esc(p.title) + '</h1>'
     + '<div class="col" style="gap:10px"><div class="price" style="font-size:36px">' + (v && priced(v) ? peso(v.price) : 'Price on request') + '</div>'
     + (sl ? '<span class="pill-s ' + sl.c + '" style="align-self:flex-start">' + sl.t + '</span>' : '') + '</div>'
-    + (vs.length ? '<div class="col" style="gap:10px"><div style="font-weight:700">Choose a version</div><div class="chips" role="group" aria-label="Version">' + vs.map(x =>
+    + (vs.length > 1 ? '<div class="col" style="gap:10px"><div style="font-weight:700">Choose a version</div><div class="chips" role="group" aria-label="Version">' + vs.map(x =>
       '<button type="button" class="chip' + (v && x.id === v.id ? ' on' : '') + '" data-act="variant" data-id="' + esc(x.id) + '">' + esc(x.name) + '<div class="small" style="margin-top:2px">' + (priced(x) ? peso(x.price) : 'Price on request') + (avail(x) ? '' : ' · Sold out') + '</div></button>').join('') + '</div></div>' : '')
     + (v && !priced(v) ? '<div class="note warn">This version is priced on request. <a href="' + MESSENGER + '">Message us</a> for the price.</div>' : '')
     + '<div class="row" style="align-items:center;gap:16px"><div class="step" aria-label="Quantity"><button type="button" aria-label="Fewer" data-act="qdec">−</button><b>' + q + '</b><button type="button" aria-label="More" data-act="qinc"' + (v && v.stock != null && q >= v.stock ? ' disabled' : '') + '>+</button></div>'
@@ -355,7 +356,8 @@ async function saveBook() {
     if (e.removedImages.length) {
       const ids = e.removedImages.filter(i => i.id).map(i => i.id);
       if (ids.length) { r = await sb.from('book_images').delete().in('id', ids); if (r.error) throw r.error; }
-      await sb.storage.from('book-images').remove(e.removedImages.map(i => i.path));
+      const rp = e.removedImages.map(i => i.path).filter(isLocal);
+      if (rp.length) await sb.storage.from('book-images').remove(rp);
     }
     await loadBooks(); S.busy = false; S.editing = null; S.confirmDel = false; toast('Book saved.'); render();
   } catch (err) { S.busy = false; S.msg = 'Could not save: ' + (err.message || 'please try again.'); render(); }
@@ -380,7 +382,7 @@ function shrink(file) {
 }
 async function discardNewUploads() {
   if (!S.editing) return;
-  const orphans = S.editing.images.filter(i => !i.id).map(i => i.path);
+  const orphans = S.editing.images.filter(i => !i.id).map(i => i.path).filter(isLocal);
   if (orphans.length) await sb.storage.from('book-images').remove(orphans);
 }
 
@@ -425,7 +427,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'adm-save') { saveBook(); }
   else if (a === 'adm-del') { S.confirmDel = true; render(); }
   else if (a === 'adm-del-yes' && S.editing) {
-    const e = S.editing, paths = e.images.map(i => i.path);
+    const e = S.editing, paths = e.images.map(i => i.path).filter(isLocal);
     const { error } = await sb.from('books').delete().eq('id', e.id);
     if (error) { toast('Could not delete.'); return; }
     if (paths.length) await sb.storage.from('book-images').remove(paths);
